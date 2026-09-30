@@ -1,0 +1,1541 @@
+{
+  "delivery": {
+    "business_quality_passed": true,
+    "claim_set": {
+      "claim_set_id": "claims-adaptive-attempt-dsl-2ab6513fb8cd-3",
+      "claims": [
+        {
+          "citation_locators": [
+            "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-A', start_char=36, end_char=127, extractor_version='chunker-v1')"
+          ],
+          "claim_id": "0",
+          "claim_text": "cost_cny=510696 period=2026-01 profit_cny=97279 revenue_cny=607975 unit_id=U-A. U-A 2026-01: A partner promotion was active; rebates are already deducted from net revenue.",
+          "claim_type": "fact",
+          "numeric_fields": {
+            "cost_cny": 510696.0,
+            "profit_cny": 97279.0,
+            "revenue_cny": 607975.0
+          },
+          "status": "ready",
+          "supporting_artifact_ref_ids": [
+            "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2"
+          ],
+          "supporting_evidence_item_ids": [
+            "ctx-notes_2026-01.md#U-A"
+          ],
+          "uncertainty_note": ""
+        },
+        {
+          "citation_locators": [
+            "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-B', start_char=136, end_char=228, extractor_version='chunker-v1')"
+          ],
+          "claim_id": "1",
+          "claim_text": "cost_cny=471961 period=2026-01 profit_cny=140981 revenue_cny=612942 unit_id=U-B. U-B 2026-01: Expedited shipments increased fulfillment cost; figures include these invoices.",
+          "claim_type": "fact",
+          "numeric_fields": {
+            "cost_cny": 471961.0,
+            "profit_cny": 140981.0,
+            "revenue_cny": 612942.0
+          },
+          "status": "ready",
+          "supporting_artifact_ref_ids": [
+            "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2"
+          ],
+          "supporting_evidence_item_ids": [
+            "ctx-notes_2026-01.md#U-B"
+          ],
+          "uncertainty_note": ""
+        },
+        {
+          "citation_locators": [
+            "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-C', start_char=237, end_char=330, extractor_version='chunker-v1')"
+          ],
+          "claim_id": "2",
+          "claim_text": "cost_cny=507127 period=2026-01 profit_cny=111326 revenue_cny=618453 unit_id=U-C. U-C 2026-01: Supplier prices changed during the month; contract renewal remains under review.",
+          "claim_type": "fact",
+          "numeric_fields": {
+            "cost_cny": 507127.0,
+            "profit_cny": 111326.0,
+            "revenue_cny": 618453.0
+          },
+          "status": "ready",
+          "supporting_artifact_ref_ids": [
+            "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2"
+          ],
+          "supporting_evidence_item_ids": [
+            "ctx-notes_2026-01.md#U-C"
+          ],
+          "uncertainty_note": ""
+        },
+        {
+          "citation_locators": [
+            "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-D', start_char=339, end_char=423, extractor_version='chunker-v1')"
+          ],
+          "claim_id": "3",
+          "claim_text": "cost_cny=431382 period=2026-01 profit_cny=193815 revenue_cny=625197 unit_id=U-D. U-D 2026-01: Direct-channel orders increased; no revenue recognition policy changed.",
+          "claim_type": "fact",
+          "numeric_fields": {
+            "cost_cny": 431382.0,
+            "profit_cny": 193815.0,
+            "revenue_cny": 625197.0
+          },
+          "status": "ready",
+          "supporting_artifact_ref_ids": [
+            "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2"
+          ],
+          "supporting_evidence_item_ids": [
+            "ctx-notes_2026-01.md#U-D"
+          ],
+          "uncertainty_note": ""
+        }
+      ],
+      "schema_version": "statebus.claim_set.v1",
+      "status": "ready",
+      "task_id": "F01"
+    },
+    "mechanism_gate_passed": true,
+    "quality_passed": true,
+    "quality_source_ref": {
+      "path": "finance/slots/F01/task-row.json"
+    },
+    "report_source_ref": {
+      "path": "finance/slots/F01/report.json"
+    },
+    "rows": [
+      {
+        "cost_cny": 510696,
+        "period": "2026-01",
+        "profit_cny": 97279,
+        "revenue_cny": 607975,
+        "unit_id": "U-A"
+      },
+      {
+        "cost_cny": 471961,
+        "period": "2026-01",
+        "profit_cny": 140981,
+        "revenue_cny": 612942,
+        "unit_id": "U-B"
+      },
+      {
+        "cost_cny": 507127,
+        "period": "2026-01",
+        "profit_cny": 111326,
+        "revenue_cny": 618453,
+        "unit_id": "U-C"
+      },
+      {
+        "cost_cny": 431382,
+        "period": "2026-01",
+        "profit_cny": 193815,
+        "revenue_cny": 625197,
+        "unit_id": "U-D"
+      }
+    ],
+    "rows_source_ref": {
+      "path": "finance/slots/F01/rows.json"
+    }
+  },
+  "edges": [
+    {
+      "from": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+      "kind": "verified_commit",
+      "label": "verified commit",
+      "to": "memory:F01:3b4d093b019198a0"
+    },
+    {
+      "from": "memory:F01:3b4d093b019198a0",
+      "kind": "candidate",
+      "label": "candidate / verdict",
+      "to": "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820"
+    },
+    {
+      "from": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+      "kind": "state_to_evidence",
+      "label": "selected evidence",
+      "to": "artifact:F01"
+    }
+  ],
+  "events": [
+    {
+      "actor": "runtime_driver",
+      "event_ts_ns": 1790475020837305101,
+      "id": "F01:runtime_events.jsonl:1",
+      "kind": "runtime.plan.approved",
+      "object_ids": [
+        "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e"
+      ],
+      "order": 1,
+      "payload": {
+        "adaptive_runtime_signature": "f165828ed3b423be4b66a28956e5d1c4da5babfc2730625ffe840d761b5ec650",
+        "approved_plan_hash": "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e",
+        "fallback_used": false,
+        "policy_rejected": false,
+        "policy_report_hash": "ed8756ec1730cd12909c7d08921329f92470daf128339e6608b5e9a3fa1869cf",
+        "proposal_valid": true,
+        "provider_registry_digest": "fd498885c661b2aa3aec258545aeab5ef5640944efa387626b2ddd3674c8966b",
+        "registry_digest": "090eb8e585d2e828ada6398f89ca6b2ddfc4c6295483f018dd8deb21dc51a6e8",
+        "repair_used": false,
+        "requested_memory_policy": "validated_replay",
+        "run_id": "dsl-2ab6513fb8cd",
+        "runtime_identity_hash": "28bd5d8216fc47aea4d37c5c38aeac5f15327d3eaafe8e65163fe96cfd8a552e",
+        "session_id": "dsl-2ab6513fb8cd",
+        "workflow_mode": "adaptive_bounded"
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "runtime_driver",
+      "event_ts_ns": 1790475020838613737,
+      "id": "F01:runtime_events.jsonl:5",
+      "kind": "runtime.capability.grant",
+      "object_ids": [],
+      "order": 2,
+      "payload": {
+        "capability_id": "dsl-retrieve",
+        "execution_binding_hash": "ac2f6c10dce986cf20a5cc5a5e6c1ebf029d64bee4fda1c91a3a41c49f64037d",
+        "grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+        "origin": "LOCAL_RUNTIME",
+        "provider_id": "legacy-dsl-retrieve-retrieval_adapter",
+        "workflow_mode": "adaptive_bounded"
+      },
+      "source_ref": {
+        "line": 5,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": 1790475020838777240,
+      "id": "F01:runtime_events.jsonl:6",
+      "kind": "runtime.step.running",
+      "object_ids": [],
+      "order": 3,
+      "payload": {
+        "origin": "LOCAL_RUNTIME"
+      },
+      "source_ref": {
+        "line": 6,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": 1790475030304601183,
+      "id": "F01:runtime_events.jsonl:11",
+      "kind": "state.publish",
+      "object_ids": [
+        "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      ],
+      "order": 4,
+      "payload": {
+        "manifest_id": "semantic-manifest-F01",
+        "producer_pid": 371529,
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "storage_kind": "mmap_file"
+      },
+      "source_ref": {
+        "line": 11,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "executor",
+      "event_ts_ns": 1790475030304703771,
+      "id": "F01:runtime_events.jsonl:12",
+      "kind": "state.resolve",
+      "object_ids": [
+        "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      ],
+      "order": 5,
+      "payload": {
+        "consumer_pid": 371712,
+        "producer_pid": 371529,
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      },
+      "source_ref": {
+        "line": 12,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "executor",
+      "event_ts_ns": 1790475030304797988,
+      "id": "F01:runtime_events.jsonl:13",
+      "kind": "state.consume",
+      "object_ids": [
+        "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      ],
+      "order": 6,
+      "payload": {
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "selected_candidate_ids": [
+          "ctx-notes_2026-01.md#U-B",
+          "ctx-notes_2026-01.md#U-D",
+          "ctx-notes_2026-01.md#U-C",
+          "ctx-notes_2026-01.md#U-A"
+        ]
+      },
+      "source_ref": {
+        "line": 13,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": 1790475030305620330,
+      "id": "F01:runtime_events.jsonl:14",
+      "kind": "runtime.step.completed",
+      "object_ids": [
+        "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e"
+      ],
+      "order": 7,
+      "payload": {
+        "approved_plan_hash": "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e",
+        "grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e"
+      },
+      "source_ref": {
+        "line": 14,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "runtime_driver",
+      "event_ts_ns": 1790475030308540270,
+      "id": "F01:runtime_events.jsonl:18",
+      "kind": "runtime.capability.grant",
+      "object_ids": [],
+      "order": 8,
+      "payload": {
+        "capability_id": "dsl-execute",
+        "execution_binding_hash": "97db53980aac8b1806af74cd7830578f992ce11a3f2d81d53fa323d63baad7c6",
+        "grant_hash": "44faf95bc2c3334eee1affaaeefa9f37b2ef9375b776a37e90f14ba201d92297",
+        "origin": "LOCAL_RUNTIME",
+        "provider_id": "legacy-dsl-execute-transform_dsl",
+        "workflow_mode": "adaptive_bounded"
+      },
+      "source_ref": {
+        "line": 18,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "executor",
+      "event_ts_ns": 1790475030308879896,
+      "id": "F01:runtime_events.jsonl:19",
+      "kind": "runtime.step.running",
+      "object_ids": [],
+      "order": 9,
+      "payload": {
+        "origin": "LOCAL_RUNTIME"
+      },
+      "source_ref": {
+        "line": 19,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "executor",
+      "event_ts_ns": 1790475060821792339,
+      "id": "F01:runtime_events.jsonl:27",
+      "kind": "runtime.step.completed",
+      "object_ids": [
+        "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e"
+      ],
+      "order": 10,
+      "payload": {
+        "approved_plan_hash": "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e",
+        "grant_hash": "44faf95bc2c3334eee1affaaeefa9f37b2ef9375b776a37e90f14ba201d92297"
+      },
+      "source_ref": {
+        "line": 27,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "runtime_driver",
+      "event_ts_ns": 1790475060822990151,
+      "id": "F01:runtime_events.jsonl:31",
+      "kind": "runtime.capability.grant",
+      "object_ids": [],
+      "order": 11,
+      "payload": {
+        "capability_id": "dsl-report",
+        "execution_binding_hash": "f549fd16d7b7af30cd58c9e719fe74b5c9458d490e04f6818cfe981aae3c5d90",
+        "grant_hash": "6013f2036e683a43fdeecf58c564c57b74243c516f708d9e82c69d5a4076c270",
+        "origin": "LOCAL_RUNTIME",
+        "provider_id": "legacy-dsl-report-runtime_builtin",
+        "workflow_mode": "adaptive_bounded"
+      },
+      "source_ref": {
+        "line": 31,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "summarizer",
+      "event_ts_ns": 1790475060823159266,
+      "id": "F01:runtime_events.jsonl:32",
+      "kind": "runtime.step.running",
+      "object_ids": [],
+      "order": 12,
+      "payload": {
+        "origin": "LOCAL_RUNTIME"
+      },
+      "source_ref": {
+        "line": 32,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "summarizer",
+      "event_ts_ns": 1790475103969702934,
+      "id": "F01:runtime_events.jsonl:35",
+      "kind": "runtime.step.completed",
+      "object_ids": [
+        "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e"
+      ],
+      "order": 13,
+      "payload": {
+        "approved_plan_hash": "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e",
+        "grant_hash": "6013f2036e683a43fdeecf58c564c57b74243c516f708d9e82c69d5a4076c270"
+      },
+      "source_ref": {
+        "line": 35,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "runtime_supervisor",
+      "event_ts_ns": 1790475103975496829,
+      "id": "F01:runtime_events.jsonl:37",
+      "kind": "memory.commit.verified",
+      "object_ids": [
+        "memory:F01:3b4d093b019198a0",
+        "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2"
+      ],
+      "order": 14,
+      "payload": {
+        "artifact_hash": "3b4d093b019198a09a25a7264b967e8b25ea719ef2e7608a29591a4f1a9f1b7a",
+        "artifact_ref_id": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+        "attempted": true,
+        "benchmark_gold_used": false,
+        "committed": true,
+        "input_lineage_hashes": [
+          "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac"
+        ],
+        "memory_admission_receipt_hash": "3d5e926fc9f11d1e2d2c827efbaa48a06ee6ddf64735ef2fa1b239cef8eb0aee",
+        "memory_id": "memory:F01:3b4d093b019198a0",
+        "output_contract_version": "mechanism_simple_v2.finance_simple_summary_v1",
+        "quality_report_hash": "b2b31c4c542cca02440d66aeaa9be9e5bb34a1d270867bd22edd340ccd6692b7",
+        "reason": "runtime_quality_and_artifact_hash_verified",
+        "validator_digest": "4b7fb5698eca37dfd55ce0a6f0423c1b66565ad266677da1bf5adbd0b92d7104"
+      },
+      "source_ref": {
+        "line": 37,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "runtime_supervisor",
+      "event_ts_ns": 1790475103975984754,
+      "id": "F01:runtime_events.jsonl:40",
+      "kind": "state.release",
+      "object_ids": [
+        "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      ],
+      "order": 15,
+      "payload": {
+        "owner": "F01",
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+      },
+      "source_ref": {
+        "line": 40,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": null,
+      "id": "F01:state-events.jsonl:1",
+      "kind": "event.publish",
+      "object_ids": [],
+      "order": 16,
+      "payload": {
+        "event": "publish",
+        "generation_missing_reason": "embedding_generation_not_separately_timed",
+        "generation_ms": null,
+        "hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "payload_bytes": 20480,
+        "producer_pid": 371529,
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "schema": "statebus.dense_semantic_state.v1",
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/state-events.jsonl"
+      },
+      "time_basis": "causal_order"
+    },
+    {
+      "actor": "runtime",
+      "event_ts_ns": null,
+      "id": "F01:state-events.jsonl:2",
+      "kind": "event.transfer",
+      "object_ids": [],
+      "order": 17,
+      "payload": {
+        "consumer_pid": 371712,
+        "event": "transfer",
+        "producer_pid": 371529,
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "state_type": "semantic_embedding_matrix",
+        "telemetry_event_id": "40786ae1-a7a9-4d9d-a14c-58360ba8dc2e",
+        "transfer_count": 1.0,
+        "transfer_scope": "cross_process_ref_resolution_not_a_payload_copy",
+        "wire_bytes": null
+      },
+      "source_ref": {
+        "line": 2,
+        "path": "finance/slots/F01/state-events.jsonl"
+      },
+      "time_basis": "causal_order"
+    },
+    {
+      "actor": "semantic_state_worker",
+      "event_ts_ns": null,
+      "id": "F01:state-events.jsonl:3",
+      "kind": "event.consume",
+      "object_ids": [
+        "grant-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1"
+      ],
+      "order": 18,
+      "payload": {
+        "activity": "no_effect",
+        "consume_ms": 1.159725,
+        "consume_timing_missing_reason": null,
+        "consume_timing_scope": "worker_run_start_to_completion_including_read_and_selection",
+        "consumer": "semantic_state_worker",
+        "consumer_pid": 371712,
+        "downstream_effect": "no_effect",
+        "event": "consume",
+        "hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "hydrate_bytes": 20480,
+        "missing_reason": null,
+        "producer_pid": 371529,
+        "read_byte_scope": "logical_matrix_read; hydrate_bytes_is_alias_not_additional_io",
+        "read_bytes": 20480,
+        "receipt": {
+          "attempt_id": "adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "behavioral_effect": "no_effect",
+          "binding_hash": "ac2f6c10dce986cf20a5cc5a5e6c1ebf029d64bee4fda1c91a3a41c49f64037d",
+          "binding_id": "binding-adaptive-attempt-dsl-2ab6513fb8cd-1-legacy-dsl-retrieve-retrieval_adapter",
+          "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "cache_epoch": "dsl-2ab6513fb8cd:adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "capability_grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+          "consumer_pid": 371712,
+          "descriptor_identity": {
+            "binding_id": "binding-adaptive-attempt-dsl-2ab6513fb8cd-1-legacy-dsl-retrieve-retrieval_adapter",
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "cache_epoch": "dsl-2ab6513fb8cd:adaptive-attempt-dsl-2ab6513fb8cd-1",
+            "dtype": "float32",
+            "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "handle_identity": {
+              "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+              "contract_metadata": {
+                "dense_semantic_state": {
+                  "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+                  "byte_order": "little",
+                  "dtype": "float32",
+                  "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+                  "encoder_revision": "retriever-fanout-v1",
+                  "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+                  "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+                  "hydrate_manifest_id": "semantic-manifest-F01",
+                  "lease_expires_at_ns": 1790475089427091620,
+                  "normalized": true,
+                  "owner_session_id": "dsl-2ab6513fb8cd",
+                  "producer_pid": 371529,
+                  "row_layout": "query_then_candidates",
+                  "schema_version": "statebus.dense_semantic_state.v1",
+                  "shape": [
+                    5,
+                    1024
+                  ],
+                  "size_bytes": 20480,
+                  "source_text_hashes": [
+                    "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+                    "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+                    "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+                    "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+                    "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+                  ],
+                  "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+                  "state_kind": "DENSE_SEMANTIC_STATE",
+                  "storage_kind": ""
+                }
+              },
+              "decision": {
+                "fallback_used": false,
+                "object_kind": "DENSE_SEMANTIC_STATE",
+                "preferred": "mmap_file",
+                "reason": "preferred_storage_selected",
+                "selected": "mmap_file"
+              },
+              "memfd_descriptor_available": false,
+              "memfd_name": "",
+              "object_kind": "DENSE_SEMANTIC_STATE",
+              "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+              "root_id": "state_root",
+              "shared_memory_name": "",
+              "size_bytes": 20480,
+              "storage_kind": "mmap_file"
+            },
+            "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+            "manifest_id": "semantic-manifest-F01",
+            "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "shape": [
+              5,
+              1024
+            ],
+            "size_bytes": 20480,
+            "socket_session_identity": {
+              "session_id": "dsl-2ab6513fb8cd"
+            },
+            "state_identity_hash": "86cea711d015cf207e290d4bc0412cf13c0c578167cd71e1cf416d582027256b",
+            "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "storage_kind": "mmap_file"
+          },
+          "downstream_ref": "evidence:F01:retrieve:adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "downstream_ref_ids": [
+            "evidence:F01:retrieve:adaptive-attempt-dsl-2ab6513fb8cd-1"
+          ],
+          "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+          "execution_binding_hash": "ac2f6c10dce986cf20a5cc5a5e6c1ebf029d64bee4fda1c91a3a41c49f64037d",
+          "grant_id": "grant-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "handle_identity": {
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "contract_metadata": {
+              "dense_semantic_state": {
+                "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+                "byte_order": "little",
+                "dtype": "float32",
+                "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+                "encoder_revision": "retriever-fanout-v1",
+                "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+                "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+                "hydrate_manifest_id": "semantic-manifest-F01",
+                "lease_expires_at_ns": 1790475089427091620,
+                "normalized": true,
+                "owner_session_id": "dsl-2ab6513fb8cd",
+                "producer_pid": 371529,
+                "row_layout": "query_then_candidates",
+                "schema_version": "statebus.dense_semantic_state.v1",
+                "shape": [
+                  5,
+                  1024
+                ],
+                "size_bytes": 20480,
+                "source_text_hashes": [
+                  "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+                  "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+                  "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+                  "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+                  "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+                ],
+                "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+                "state_kind": "DENSE_SEMANTIC_STATE",
+                "storage_kind": ""
+              }
+            },
+            "decision": {
+              "fallback_used": false,
+              "object_kind": "DENSE_SEMANTIC_STATE",
+              "preferred": "mmap_file",
+              "reason": "preferred_storage_selected",
+              "selected": "mmap_file"
+            },
+            "memfd_descriptor_available": false,
+            "memfd_name": "",
+            "object_kind": "DENSE_SEMANTIC_STATE",
+            "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "root_id": "state_root",
+            "shared_memory_name": "",
+            "size_bytes": 20480,
+            "storage_kind": "mmap_file"
+          },
+          "input_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+          "invocation_id": "invocation-d44df24814ef4e23b1520a1152a7bd57",
+          "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+          "manifest_id": "semantic-manifest-F01",
+          "observed_blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "observed_dtype": "float32",
+          "observed_shape": [
+            5,
+            1024
+          ],
+          "observed_size_bytes": 20480,
+          "output_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+          "pin_id": "state-pin-40bb6acfccac42fb99c40be93dd2c29a",
+          "producer_pid": 371529,
+          "read_completed_at_ns": 1790475030178661204,
+          "read_started_at_ns": 1790475030177501479,
+          "receipt_status": "observed",
+          "release_status": "pending_response_admission",
+          "response_admission_hash": "2e16b24631b815ceefb878281af4e9f6d2e7c4693c86f59c4b20f09c6fa27769",
+          "run_id": "dsl-2ab6513fb8cd",
+          "schema_version": "statebus.semantic_consumer_receipt.v1",
+          "selected_bytes": 360,
+          "selected_candidate_ids": [
+            "ctx-notes_2026-01.md#U-B",
+            "ctx-notes_2026-01.md#U-D",
+            "ctx-notes_2026-01.md#U-C",
+            "ctx-notes_2026-01.md#U-A"
+          ],
+          "selected_evidence_bytes": 360,
+          "selected_ids": [
+            "ctx-notes_2026-01.md#U-B",
+            "ctx-notes_2026-01.md#U-D",
+            "ctx-notes_2026-01.md#U-C",
+            "ctx-notes_2026-01.md#U-A"
+          ],
+          "selected_row_indices": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "selected_rows": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "session_id": "dsl-2ab6513fb8cd",
+          "state_access_grant_hash": "2d5f6fb53cc51af251570d9f8e9bf7c4d10b7aca0dceaf0e02251b3f79520d2b",
+          "state_identity_hash": "86cea711d015cf207e290d4bc0412cf13c0c578167cd71e1cf416d582027256b",
+          "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "step_id": "retrieve",
+          "task_id": "F01",
+          "trace_id": "dsl-2ab6513fb8cd"
+        },
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "schema": "statebus.dense_semantic_state.v1",
+        "selected_evidence_bytes": 360,
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 3,
+        "path": "finance/slots/F01/state-events.jsonl"
+      },
+      "time_basis": "causal_order"
+    },
+    {
+      "actor": "runtime",
+      "event_ts_ns": null,
+      "id": "F01:state-events.jsonl:4",
+      "kind": "event.release",
+      "object_ids": [],
+      "order": 19,
+      "payload": {
+        "event": "release",
+        "physical_reclaimed": true,
+        "receipt": {
+          "downstream_effect_completed_at_ns": 1790475030297533751,
+          "grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+          "lease_expires_at_ns": 1790475040838339015,
+          "lease_id": "",
+          "live_pin_count": 0,
+          "owner_released": true,
+          "owner_released_at_ns": 1790475103976071140,
+          "owner_session_id": "dsl-2ab6513fb8cd",
+          "physical_reclaimed": true,
+          "physical_reclaimed_at_ns": 1790475103976073108,
+          "producer_attempt_id": "adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "producer_session_id": "dsl-2ab6513fb8cd",
+          "producer_step_id": "retrieve",
+          "producer_task_id": "F01",
+          "release_after_response_admission": true,
+          "release_status": "reclaimed",
+          "released_at_ns": 1790475103976090883,
+          "released_pin_ids": [
+            "state-pin-40bb6acfccac42fb99c40be93dd2c29a",
+            "state-pin-ed22a40de97742c79646558c8ab0f4ac"
+          ],
+          "response_admitted_at_ns": 1790475030294137424,
+          "runtime_pin_released_at_ns": 1790475030298326357,
+          "schema_version": "statebus.state_release_reclaim.v1",
+          "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "worker_pin_released_at_ns": 1790475030298311415
+        },
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "release_count": 1,
+        "release_status": "reclaimed",
+        "released_bytes": 20480,
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 4,
+        "path": "finance/slots/F01/state-events.jsonl"
+      },
+      "time_basis": "causal_order"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": null,
+      "id": "F01:memory-events.jsonl:1",
+      "kind": "event.query",
+      "object_ids": [
+        "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820"
+      ],
+      "order": 20,
+      "payload": {
+        "candidate_count": 0,
+        "decisions": [],
+        "event": "query",
+        "queries_with_candidate": 0,
+        "query_count": 1,
+        "query_id": "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820"
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/memory-events.jsonl"
+      },
+      "time_basis": "causal_order"
+    },
+    {
+      "actor": "planner",
+      "event_ts_ns": 15961292220093428,
+      "id": "F01:handoffs.jsonl:3",
+      "kind": "handoff.consume",
+      "object_ids": [
+        "8cd75393-8be5-40f3-9bf8-710244eee362"
+      ],
+      "order": 21,
+      "payload": {
+        "carrier": "in_process_typed_object",
+        "event": "consume",
+        "message_id": "8cd75393-8be5-40f3-9bf8-710244eee362",
+        "receiver": "planner",
+        "receiver_ms": 0.240565,
+        "sender": "controller",
+        "step": "plan",
+        "timestamp_ns": 15961292220093428,
+        "transport_scope": "in_process_same_receiver",
+        "wire_bytes": null,
+        "wire_missing_reason": "no_wire_in_process_handoff"
+      },
+      "source_ref": {
+        "line": 3,
+        "path": "finance/slots/F01/handoffs.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "retriever",
+      "event_ts_ns": 15961300807361041,
+      "id": "F01:handoffs.jsonl:6",
+      "kind": "handoff.consume",
+      "object_ids": [
+        "346054d9-89ec-4ed6-97bf-9c0be002473a"
+      ],
+      "order": 22,
+      "payload": {
+        "carrier": "in_process_typed_object",
+        "event": "consume",
+        "message_id": "346054d9-89ec-4ed6-97bf-9c0be002473a",
+        "receiver": "retriever",
+        "receiver_ms": 8580.736242,
+        "sender": "planner",
+        "step": "retrieve",
+        "timestamp_ns": 15961300807361041,
+        "transport_scope": "in_process_same_receiver",
+        "wire_bytes": null,
+        "wire_missing_reason": "no_wire_in_process_handoff"
+      },
+      "source_ref": {
+        "line": 6,
+        "path": "finance/slots/F01/handoffs.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "executor",
+      "event_ts_ns": 15961332204452362,
+      "id": "F01:handoffs.jsonl:9",
+      "kind": "handoff.consume",
+      "object_ids": [
+        "e74dc454-93db-41bb-93c1-3e54fb75ac67"
+      ],
+      "order": 23,
+      "payload": {
+        "carrier": "in_process_typed_object",
+        "event": "consume",
+        "message_id": "e74dc454-93db-41bb-93c1-3e54fb75ac67",
+        "receiver": "executor",
+        "receiver_ms": 30504.236853,
+        "sender": "retriever",
+        "step": "execute",
+        "timestamp_ns": 15961332204452362,
+        "transport_scope": "in_process_same_receiver",
+        "wire_bytes": null,
+        "wire_missing_reason": "no_wire_in_process_handoff"
+      },
+      "source_ref": {
+        "line": 9,
+        "path": "finance/slots/F01/handoffs.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    },
+    {
+      "actor": "summarizer",
+      "event_ts_ns": 15961375352800154,
+      "id": "F01:handoffs.jsonl:12",
+      "kind": "handoff.consume",
+      "object_ids": [
+        "b5934c11-d6e1-427e-9c25-c17f870c1f96"
+      ],
+      "order": 24,
+      "payload": {
+        "carrier": "in_process_typed_object",
+        "event": "consume",
+        "message_id": "b5934c11-d6e1-427e-9c25-c17f870c1f96",
+        "receiver": "summarizer",
+        "receiver_ms": 43141.036985,
+        "sender": "executor",
+        "step": "summarize",
+        "timestamp_ns": 15961375352800154,
+        "transport_scope": "in_process_same_receiver",
+        "wire_bytes": null,
+        "wire_missing_reason": "no_wire_in_process_handoff"
+      },
+      "source_ref": {
+        "line": 12,
+        "path": "finance/slots/F01/handoffs.jsonl"
+      },
+      "time_basis": "runtime_timestamp"
+    }
+  ],
+  "family": "finance",
+  "metrics": {
+    "executor_generation_count": 1,
+    "executor_repair_count": 0,
+    "executor_request_count": 1,
+    "planner_request_count": 0,
+    "provider_completion_tokens": 665,
+    "provider_observed_request_count": 2,
+    "provider_observed_usage_partial": {
+      "completion_tokens": 665,
+      "prompt_tokens": 2737,
+      "total_tokens": 3402
+    },
+    "provider_prompt_tokens": 2737,
+    "provider_request_count": 2,
+    "provider_total_tokens": 3402,
+    "provider_unresolved_call_ids": [],
+    "provider_usage_missing_reason": null,
+    "retriever_request_count": 0,
+    "summarizer_request_count": 1
+  },
+  "objects": [
+    {
+      "fields": {
+        "behavioral_effect": "no_effect",
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "consumer_pid": 371712,
+        "dtype": "float32",
+        "producer_pid": 371529,
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "shape": [
+          5,
+          1024
+        ],
+        "size_bytes": 20480,
+        "state_type": "semantic_embedding_matrix",
+        "storage_kind": "mmap_file",
+        "wire_bytes": null,
+        "wire_bytes_missing_reason": "cross_process_ref_resolution_not_a_payload_copy"
+      },
+      "id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+      "label": "SemanticState",
+      "object_type": "SemanticStateRef",
+      "summary": "Retriever 发布的跨进程语义矩阵引用"
+    },
+    {
+      "fields": {
+        "artifact_hash": "3b4d093b019198a09a25a7264b967e8b25ea719ef2e7608a29591a4f1a9f1b7a",
+        "artifact_ref_id": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+        "quality_report_hash": "b2b31c4c542cca02440d66aeaa9be9e5bb34a1d270867bd22edd340ccd6692b7",
+        "source_ref": {
+          "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+        }
+      },
+      "id": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+      "label": "Verified Artifact",
+      "object_type": "ExecutionArtifactRef",
+      "summary": "通过质量门并可进入 Memory 的结构化产物"
+    },
+    {
+      "fields": {
+        "artifact_ref_id": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+        "candidate_count": 0,
+        "memory_id": "memory:F01:3b4d093b019198a0",
+        "replay_class": null,
+        "source_task_id": "F01",
+        "verdict": null
+      },
+      "id": "memory:F01:3b4d093b019198a0",
+      "label": "Memory",
+      "object_type": "MemoryRef",
+      "summary": "跨任务可复用的 verified artifact 引用"
+    },
+    {
+      "fields": {
+        "candidate_count": 0,
+        "decisions": [],
+        "event": "query",
+        "queries_with_candidate": 0,
+        "query_count": 1,
+        "query_id": "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820"
+      },
+      "id": "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820",
+      "label": "Memory Query",
+      "object_type": "MemoryQuery/Verdict",
+      "summary": "0 个候选，按合同判定"
+    },
+    {
+      "fields": {
+        "grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e"
+      },
+      "id": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+      "label": "Capability grant",
+      "object_type": "CapabilityGrant",
+      "summary": "Runtime 授权门"
+    },
+    {
+      "fields": {
+        "grant_hash": "44faf95bc2c3334eee1affaaeefa9f37b2ef9375b776a37e90f14ba201d92297"
+      },
+      "id": "44faf95bc2c3334eee1affaaeefa9f37b2ef9375b776a37e90f14ba201d92297",
+      "label": "Capability grant",
+      "object_type": "CapabilityGrant",
+      "summary": "Runtime 授权门"
+    },
+    {
+      "fields": {
+        "grant_hash": "6013f2036e683a43fdeecf58c564c57b74243c516f708d9e82c69d5a4076c270"
+      },
+      "id": "6013f2036e683a43fdeecf58c564c57b74243c516f708d9e82c69d5a4076c270",
+      "label": "Capability grant",
+      "object_type": "CapabilityGrant",
+      "summary": "Runtime 授权门"
+    }
+  ],
+  "raw_evidence": [
+    {
+      "event_type": "ADAPTIVE_PLAN_APPROVED",
+      "fields": {
+        "event_id": "bd46507f-db6d-458b-96ea-0216966664e8",
+        "metrics": {
+          "adaptive_plan_changed_execution": 0.0,
+          "adaptive_plan_model_used": 0.0,
+          "adaptive_selected_capability_count": 3.0,
+          "approved_plan_valid": 1.0,
+          "fallback_used": 0.0,
+          "policy_rejected": 0.0,
+          "proposal_valid": 1.0,
+          "repair_used": 0.0
+        },
+        "payload": {
+          "adaptive_runtime_signature": "f165828ed3b423be4b66a28956e5d1c4da5babfc2730625ffe840d761b5ec650",
+          "approved_plan_hash": "a6b0f3fd9bb147806ae9b63072d74a3da56c722baecd8f8a666e72b0caa5970e",
+          "fallback_used": false,
+          "policy_rejected": false,
+          "policy_report_hash": "ed8756ec1730cd12909c7d08921329f92470daf128339e6608b5e9a3fa1869cf",
+          "proposal_valid": true,
+          "provider_registry_digest": "fd498885c661b2aa3aec258545aeab5ef5640944efa387626b2ddd3674c8966b",
+          "registry_digest": "090eb8e585d2e828ada6398f89ca6b2ddfc4c6295483f018dd8deb21dc51a6e8",
+          "repair_used": false,
+          "requested_memory_policy": "validated_replay",
+          "run_id": "dsl-2ab6513fb8cd",
+          "runtime_identity_hash": "28bd5d8216fc47aea4d37c5c38aeac5f15327d3eaafe8e65163fe96cfd8a552e",
+          "session_id": "dsl-2ab6513fb8cd",
+          "workflow_mode": "adaptive_bounded"
+        }
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "STATE_PUBLISHED",
+      "fields": {
+        "event_id": "77a6b8cc-0740-475f-9d3b-16cf8db8c65b",
+        "metrics": {
+          "semantic_state_bytes": 20480.0,
+          "semantic_state_publish_count": 1.0,
+          "semantic_state_transfer_count": 0.0
+        },
+        "payload": {
+          "manifest_id": "semantic-manifest-F01",
+          "producer_pid": 371529,
+          "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "storage_kind": "mmap_file"
+        }
+      },
+      "source_ref": {
+        "line": 11,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "STATE_RESOLVED",
+      "fields": {
+        "event_id": "40786ae1-a7a9-4d9d-a14c-58360ba8dc2e",
+        "metrics": {
+          "semantic_state_consumer_pid": 371712.0,
+          "semantic_state_resolve_count": 1.0,
+          "semantic_state_transfer_count": 1.0
+        },
+        "payload": {
+          "consumer_pid": 371712,
+          "producer_pid": 371529,
+          "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+        }
+      },
+      "source_ref": {
+        "line": 12,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "STATE_CONSUMED",
+      "fields": {
+        "event_id": "4f4d804f-de52-40d4-8aba-40772efb6c4f",
+        "metrics": {
+          "selected_candidate_count": 4.0,
+          "selected_evidence_bytes": 360.0,
+          "semantic_state_consume_count": 1.0
+        },
+        "payload": {
+          "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "selected_candidate_ids": [
+            "ctx-notes_2026-01.md#U-B",
+            "ctx-notes_2026-01.md#U-D",
+            "ctx-notes_2026-01.md#U-C",
+            "ctx-notes_2026-01.md#U-A"
+          ]
+        }
+      },
+      "source_ref": {
+        "line": 13,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "MEMORY_COMMIT_VERIFIED",
+      "fields": {
+        "event_id": "3d1d8026-1b11-4365-87d5-fe923b2a2a18",
+        "metrics": {
+          "memory_benchmark_gold_input_count": 0.0,
+          "memory_commit_count": 1.0,
+          "memory_commit_gate_count": 1.0,
+          "memory_commit_rejected_count": 0.0
+        },
+        "payload": {
+          "artifact_hash": "3b4d093b019198a09a25a7264b967e8b25ea719ef2e7608a29591a4f1a9f1b7a",
+          "artifact_ref_id": "dsl-F01-execute-adaptive-attempt-dsl-2ab6513fb8cd-2",
+          "attempted": true,
+          "benchmark_gold_used": false,
+          "committed": true,
+          "input_lineage_hashes": [
+            "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac"
+          ],
+          "memory_admission_receipt_hash": "3d5e926fc9f11d1e2d2c827efbaa48a06ee6ddf64735ef2fa1b239cef8eb0aee",
+          "memory_id": "memory:F01:3b4d093b019198a0",
+          "output_contract_version": "mechanism_simple_v2.finance_simple_summary_v1",
+          "quality_report_hash": "b2b31c4c542cca02440d66aeaa9be9e5bb34a1d270867bd22edd340ccd6692b7",
+          "reason": "runtime_quality_and_artifact_hash_verified",
+          "validator_digest": "4b7fb5698eca37dfd55ce0a6f0423c1b66565ad266677da1bf5adbd0b92d7104"
+        }
+      },
+      "source_ref": {
+        "line": 37,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "STATE_RELEASED",
+      "fields": {
+        "event_id": "4a17d11b-55ef-47b0-8ddf-624b94047529",
+        "metrics": {
+          "semantic_state_release_count": 1.0,
+          "semantic_state_released_bytes": 20480.0
+        },
+        "payload": {
+          "owner": "F01",
+          "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1"
+        }
+      },
+      "source_ref": {
+        "line": 40,
+        "path": "finance/slots/F01/runtime/telemetry/runtime_events.jsonl"
+      }
+    },
+    {
+      "event_type": "event.publish",
+      "fields": {
+        "event": "publish",
+        "generation_missing_reason": "embedding_generation_not_separately_timed",
+        "generation_ms": null,
+        "hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "payload_bytes": 20480,
+        "producer_pid": 371529,
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "schema": "statebus.dense_semantic_state.v1",
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/state-events.jsonl"
+      }
+    },
+    {
+      "event_type": "event.consume",
+      "fields": {
+        "activity": "no_effect",
+        "consume_ms": 1.159725,
+        "consume_timing_missing_reason": null,
+        "consume_timing_scope": "worker_run_start_to_completion_including_read_and_selection",
+        "consumer": "semantic_state_worker",
+        "consumer_pid": 371712,
+        "downstream_effect": "no_effect",
+        "event": "consume",
+        "hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "hydrate_bytes": 20480,
+        "missing_reason": null,
+        "producer_pid": 371529,
+        "read_byte_scope": "logical_matrix_read; hydrate_bytes_is_alias_not_additional_io",
+        "read_bytes": 20480,
+        "receipt": {
+          "attempt_id": "adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "behavioral_effect": "no_effect",
+          "binding_hash": "ac2f6c10dce986cf20a5cc5a5e6c1ebf029d64bee4fda1c91a3a41c49f64037d",
+          "binding_id": "binding-adaptive-attempt-dsl-2ab6513fb8cd-1-legacy-dsl-retrieve-retrieval_adapter",
+          "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "cache_epoch": "dsl-2ab6513fb8cd:adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "capability_grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+          "consumer_pid": 371712,
+          "descriptor_identity": {
+            "binding_id": "binding-adaptive-attempt-dsl-2ab6513fb8cd-1-legacy-dsl-retrieve-retrieval_adapter",
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "cache_epoch": "dsl-2ab6513fb8cd:adaptive-attempt-dsl-2ab6513fb8cd-1",
+            "dtype": "float32",
+            "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "handle_identity": {
+              "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+              "contract_metadata": {
+                "dense_semantic_state": {
+                  "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+                  "byte_order": "little",
+                  "dtype": "float32",
+                  "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+                  "encoder_revision": "retriever-fanout-v1",
+                  "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+                  "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+                  "hydrate_manifest_id": "semantic-manifest-F01",
+                  "lease_expires_at_ns": 1790475089427091620,
+                  "normalized": true,
+                  "owner_session_id": "dsl-2ab6513fb8cd",
+                  "producer_pid": 371529,
+                  "row_layout": "query_then_candidates",
+                  "schema_version": "statebus.dense_semantic_state.v1",
+                  "shape": [
+                    5,
+                    1024
+                  ],
+                  "size_bytes": 20480,
+                  "source_text_hashes": [
+                    "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+                    "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+                    "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+                    "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+                    "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+                  ],
+                  "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+                  "state_kind": "DENSE_SEMANTIC_STATE",
+                  "storage_kind": ""
+                }
+              },
+              "decision": {
+                "fallback_used": false,
+                "object_kind": "DENSE_SEMANTIC_STATE",
+                "preferred": "mmap_file",
+                "reason": "preferred_storage_selected",
+                "selected": "mmap_file"
+              },
+              "memfd_descriptor_available": false,
+              "memfd_name": "",
+              "object_kind": "DENSE_SEMANTIC_STATE",
+              "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+              "root_id": "state_root",
+              "shared_memory_name": "",
+              "size_bytes": 20480,
+              "storage_kind": "mmap_file"
+            },
+            "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+            "manifest_id": "semantic-manifest-F01",
+            "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "shape": [
+              5,
+              1024
+            ],
+            "size_bytes": 20480,
+            "socket_session_identity": {
+              "session_id": "dsl-2ab6513fb8cd"
+            },
+            "state_identity_hash": "86cea711d015cf207e290d4bc0412cf13c0c578167cd71e1cf416d582027256b",
+            "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "storage_kind": "mmap_file"
+          },
+          "downstream_ref": "evidence:F01:retrieve:adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "downstream_ref_ids": [
+            "evidence:F01:retrieve:adaptive-attempt-dsl-2ab6513fb8cd-1"
+          ],
+          "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+          "execution_binding_hash": "ac2f6c10dce986cf20a5cc5a5e6c1ebf029d64bee4fda1c91a3a41c49f64037d",
+          "grant_id": "grant-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "handle_identity": {
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "contract_metadata": {
+              "dense_semantic_state": {
+                "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+                "byte_order": "little",
+                "dtype": "float32",
+                "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+                "encoder_revision": "retriever-fanout-v1",
+                "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+                "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+                "hydrate_manifest_id": "semantic-manifest-F01",
+                "lease_expires_at_ns": 1790475089427091620,
+                "normalized": true,
+                "owner_session_id": "dsl-2ab6513fb8cd",
+                "producer_pid": 371529,
+                "row_layout": "query_then_candidates",
+                "schema_version": "statebus.dense_semantic_state.v1",
+                "shape": [
+                  5,
+                  1024
+                ],
+                "size_bytes": 20480,
+                "source_text_hashes": [
+                  "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+                  "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+                  "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+                  "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+                  "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+                ],
+                "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+                "state_kind": "DENSE_SEMANTIC_STATE",
+                "storage_kind": ""
+              }
+            },
+            "decision": {
+              "fallback_used": false,
+              "object_kind": "DENSE_SEMANTIC_STATE",
+              "preferred": "mmap_file",
+              "reason": "preferred_storage_selected",
+              "selected": "mmap_file"
+            },
+            "memfd_descriptor_available": false,
+            "memfd_name": "",
+            "object_kind": "DENSE_SEMANTIC_STATE",
+            "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+            "root_id": "state_root",
+            "shared_memory_name": "",
+            "size_bytes": 20480,
+            "storage_kind": "mmap_file"
+          },
+          "input_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+          "invocation_id": "invocation-d44df24814ef4e23b1520a1152a7bd57",
+          "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+          "manifest_id": "semantic-manifest-F01",
+          "observed_blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "observed_dtype": "float32",
+          "observed_shape": [
+            5,
+            1024
+          ],
+          "observed_size_bytes": 20480,
+          "output_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+          "pin_id": "state-pin-40bb6acfccac42fb99c40be93dd2c29a",
+          "producer_pid": 371529,
+          "read_completed_at_ns": 1790475030178661204,
+          "read_started_at_ns": 1790475030177501479,
+          "receipt_status": "observed",
+          "release_status": "pending_response_admission",
+          "response_admission_hash": "2e16b24631b815ceefb878281af4e9f6d2e7c4693c86f59c4b20f09c6fa27769",
+          "run_id": "dsl-2ab6513fb8cd",
+          "schema_version": "statebus.semantic_consumer_receipt.v1",
+          "selected_bytes": 360,
+          "selected_candidate_ids": [
+            "ctx-notes_2026-01.md#U-B",
+            "ctx-notes_2026-01.md#U-D",
+            "ctx-notes_2026-01.md#U-C",
+            "ctx-notes_2026-01.md#U-A"
+          ],
+          "selected_evidence_bytes": 360,
+          "selected_ids": [
+            "ctx-notes_2026-01.md#U-B",
+            "ctx-notes_2026-01.md#U-D",
+            "ctx-notes_2026-01.md#U-C",
+            "ctx-notes_2026-01.md#U-A"
+          ],
+          "selected_row_indices": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "selected_rows": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "session_id": "dsl-2ab6513fb8cd",
+          "state_access_grant_hash": "2d5f6fb53cc51af251570d9f8e9bf7c4d10b7aca0dceaf0e02251b3f79520d2b",
+          "state_identity_hash": "86cea711d015cf207e290d4bc0412cf13c0c578167cd71e1cf416d582027256b",
+          "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "step_id": "retrieve",
+          "task_id": "F01",
+          "trace_id": "dsl-2ab6513fb8cd"
+        },
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "schema": "statebus.dense_semantic_state.v1",
+        "selected_evidence_bytes": 360,
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 3,
+        "path": "finance/slots/F01/state-events.jsonl"
+      }
+    },
+    {
+      "event_type": "event.release",
+      "fields": {
+        "event": "release",
+        "physical_reclaimed": true,
+        "receipt": {
+          "downstream_effect_completed_at_ns": 1790475030297533751,
+          "grant_hash": "59a9e83861b230fca2a2745ed24040efe1eb98207bc973369180cca7b70eb02e",
+          "lease_expires_at_ns": 1790475040838339015,
+          "lease_id": "",
+          "live_pin_count": 0,
+          "owner_released": true,
+          "owner_released_at_ns": 1790475103976071140,
+          "owner_session_id": "dsl-2ab6513fb8cd",
+          "physical_reclaimed": true,
+          "physical_reclaimed_at_ns": 1790475103976073108,
+          "producer_attempt_id": "adaptive-attempt-dsl-2ab6513fb8cd-1",
+          "producer_session_id": "dsl-2ab6513fb8cd",
+          "producer_step_id": "retrieve",
+          "producer_task_id": "F01",
+          "release_after_response_admission": true,
+          "release_status": "reclaimed",
+          "released_at_ns": 1790475103976090883,
+          "released_pin_ids": [
+            "state-pin-40bb6acfccac42fb99c40be93dd2c29a",
+            "state-pin-ed22a40de97742c79646558c8ab0f4ac"
+          ],
+          "response_admitted_at_ns": 1790475030294137424,
+          "runtime_pin_released_at_ns": 1790475030298326357,
+          "schema_version": "statebus.state_release_reclaim.v1",
+          "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+          "worker_pin_released_at_ns": 1790475030298311415
+        },
+        "ref": "semantic-F01-retrieve-adaptive-attempt-dsl-2ab6513fb8cd-1-1",
+        "release_count": 1,
+        "release_status": "reclaimed",
+        "released_bytes": 20480,
+        "state_type": "semantic_embedding_matrix"
+      },
+      "source_ref": {
+        "line": 4,
+        "path": "finance/slots/F01/state-events.jsonl"
+      }
+    },
+    {
+      "event_type": "event.query",
+      "fields": {
+        "candidate_count": 0,
+        "decisions": [],
+        "event": "query",
+        "queries_with_candidate": 0,
+        "query_count": 1,
+        "query_id": "61928118655f6844eda9b30a93d2c9cdbf6b63674198c46704e9ecf24110d820"
+      },
+      "source_ref": {
+        "line": 1,
+        "path": "finance/slots/F01/memory-events.jsonl"
+      }
+    }
+  ],
+  "round": 1,
+  "run_id": "dsl-2ab6513fb8cd",
+  "source_ref": {
+    "path": "finance/slots/F01/task-row.json"
+  },
+  "status": "success",
+  "task_contract": {
+    "input_schemas": {
+      "source": {
+        "cost_cny": "number",
+        "gross_cny": "number",
+        "period": "string",
+        "refund_cny": "number",
+        "unit_id": "string"
+      }
+    },
+    "instructions": "Group source by period and unit_id. Sum gross_cny, refund_cny and cost_cny. revenue_cny = summed gross_cny minus summed refund_cny; profit_cny = revenue_cny minus summed cost_cny. The published v1 binding maps net_revenue_cny to gross_cny and refund_cny to zero; v2 deducts refunds exactly once. Return exactly output_schema, sorted ascending by period then unit_id. No ratios, risk thresholds, ranking or causal inference.",
+    "method": "finance_simple_summary_v1",
+    "output_schema": {
+      "cost_cny": "number",
+      "period": "string",
+      "profit_cny": "number",
+      "revenue_cny": "number",
+      "unit_id": "string"
+    },
+    "periods": [
+      "2026-01"
+    ],
+    "required_history": [],
+    "source_ref": {
+      "json_pointer": "/contract",
+      "path": "finance/slots/F01/manifest.json"
+    }
+  },
+  "task_id": "F01",
+  "variant": "SB-FULL"
+}

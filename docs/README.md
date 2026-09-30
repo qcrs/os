@@ -1,31 +1,65 @@
 # 文档入口
 
-文档只描述 `/home/qcrs/statebus/os` 当前 checkout 的代码、runner、测试和精选 evidence。
+这里记录 `/home/qcrs/statebus/os` 的源码结构、运行方式、实验结果和部署配置。结果数字只引用 `tests/evidence/`，执行过程和服务日志保留在 `runs/`。
 
-## 阅读路径
+## 从哪里开始
 
-了解系统：[`architecture/`](architecture/README.md) → [`implementation/`](implementation/README.md) → [`implementation/roles/`](implementation/roles/README.md)
+| 需要查看 | 文档 |
+| --- | --- |
+| 首页、安装、vLLM、Runtime、Studio、测试 | [`../README.md`](../README.md) |
+| 组件关系、进程、对象和数据流 | [`architecture/README.md`](architecture/README.md) |
+| Runtime 调用路径、角色、State、Memory 和扩展 | [`implementation/README.md`](implementation/README.md) |
+| 实验总览和关键数字 | [`experiments/README.md`](experiments/README.md) |
+| 逐组实验表和逐任务结果 | [`experiments/results.md`](experiments/results.md) |
+| 赛题原文 | [`reference/题目.md`](reference/题目.md) |
 
-开发和调试：[`implementation/runtime/`](implementation/runtime/) → [`implementation/state/`](implementation/state/) → [`architecture/code-index.md`](architecture/code-index.md)
+## 运行入口
 
-复现实验：[`experiments/`](experiments/README.md) → [`experiments/evidence-index.md`](experiments/evidence-index.md) → [`tests/benchmarks/README.md`](../tests/benchmarks/README.md)
+| 工作 | 命令或路径 |
+| --- | --- |
+| Host 环境 | `deploy/install_statebus_host.sh`、`deploy/activate_statebus_host.sh` |
+| vLLM 服务 | `scripts/vllm/manage_qwen3_32b.sh`；配置在 `deploy/vllm.env.local` |
+| Runtime 容器 | `scripts/start_statebus.sh`；profile 在 `deploy/vllm.env.gpu*-u050` |
+| Studio API | `scripts/run_statebus_studio.sh`，默认 `127.0.0.1:50080` |
+| Studio UI | `scripts/run_statebus_studio_ui.sh`，默认 `127.0.0.1:50173` |
+| Demo | [`demo/README.md`](../demo/README.md)；`demo/run_demo.sh --local-vllm` |
+| Docker Compose | `docker/compose.yaml`、`docker/.env` |
+| 离线测试 | `tests/unit/`、`tests/integration/`、`tests/benchmarks/` |
+| Live smoke / benchmark | [`tests/benchmarks/README.md`](../tests/benchmarks/README.md)；`tests/benchmarks/run_statebus.sh` |
 
 ## 目录职责
 
-| 目录 | 用途 |
+| 目录 | 内容 |
 | --- | --- |
-| [`architecture/`](architecture/) | 稳定系统结构、目录职责、源码索引和 canonical diagram |
-| [`implementation/`](implementation/) | 从当前源码整理的调用路径、对象、配置和运行说明 |
-| [`experiments/`](experiments/) | 实验分母、控制变量、runner、指标和精选 evidence |
-| [`../runs/`](../runs/) | raw run、服务日志和历史运行材料 |
-| [`reference/`](reference/) | 赛题、审计和历史参考；不能替代当前运行证据 |
+| [`architecture/`](architecture/README.md) | Runtime、角色 Worker、对象存储和模型服务的关系 |
+| [`implementation/`](implementation/README.md) | 当前源码的接口、字段、调用顺序和运行记录 |
+| [`experiments/`](experiments/README.md) | 实验分组、对照、分母、结果表和复现命令 |
+| [`../tests/evidence/README.md`](../tests/evidence/README.md) | mainline、mechanisms、model-assist 的精选 JSON/Markdown |
+| [`../runs/`](../runs/) | 单次运行的 stdout、telemetry、服务日志和 raw 结果 |
+| [`reference/`](reference/) | 赛题和外部参考材料 |
 
-## 结果入口
+`tests/evidence/summarize_results.py` 只读取精选 evidence 并输出汇总，不修改 `runs/`。
 
-| 结果 | 精选 evidence | 主要实现 |
-| --- | --- | --- |
-| 24 轮 / 48 任务主链 | [`tests/evidence/mainline/`](../tests/evidence/mainline/) | `src/statebus/benchmark/contest_dsl_mainline.py` |
-| 24 位置 Memory / State 机制 | [`tests/evidence/mechanisms/`](../tests/evidence/mechanisms/) | `contest_mechanisms.py`、`memory_ablation.py` |
-| 28 位置 APC / KV / Logit utility | [`tests/evidence/model-assist/`](../tests/evidence/model-assist/) | `benchmark/model_assist_utility/`、`runtime/prefix_*`、`runtime/logit_*` |
+## 目录导航
 
-`tests/evidence/summarize_results.py` 汇总精选目录；它不会生成或覆盖 raw run。
+```text
+docs/
+├── README.md
+├── architecture/
+├── experiments/
+├── implementation/
+├── reference/
+├── improvement/
+└── assets/
+```
+
+目录入口：
+
+| 目录 | 入口 |
+| --- | --- |
+| `architecture/` | [`architecture/README.md`](architecture/README.md) |
+| `experiments/` | [`experiments/README.md`](experiments/README.md) |
+| `implementation/` | [`implementation/README.md`](implementation/README.md) |
+| `reference/` | [`reference/`](reference/) |
+| `improvement/` | [`improvement/25_contest_evidence_closure_20260720/`](improvement/25_contest_evidence_closure_20260720/) |
+| `assets/` | [`assets/`](assets/) |

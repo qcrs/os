@@ -1,4 +1,4 @@
-import { Activity, BarChart3, BrainCircuit, Database, FlaskConical, ListChecks, Menu, Server, X } from "lucide-react";
+import { Activity, BarChart3, BrainCircuit, Database, FlaskConical, History, ListChecks, Menu, Server, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { studioApi } from "../api";
@@ -13,26 +13,31 @@ export function AppShell() {
   useEffect(() => {
     let active = true;
     const refresh = () => studioApi.health().then((value) => active && setHealth(value)).catch(() => active && setHealth(null));
+    if (location.pathname !== "/live") return undefined;
     refresh();
     const timer = window.setInterval(refresh, 15000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [location.pathname]);
 
   return (
-    <div className={location.pathname === "/live" ? "app-shell app-shell--live" : "app-shell"}>
+    <div className={location.pathname === "/live" ? "app-shell app-shell--live" : location.pathname === "/observatory" ? "app-shell app-shell--observatory" : "app-shell"}>
       <header className="topbar">
         <div className="brand">
           <div className="brand__mark"><Activity size={21} /></div>
           <div>
             <strong>StateBus</strong>
-            <span>Studio</span>
+            <span>{location.pathname === "/observatory" ? "协作运行观察台" : "Studio"}</span>
           </div>
         </div>
 
         <nav className={mobileOpen ? "main-nav is-open" : "main-nav"} aria-label="主导航">
+          <NavLink to="/observatory" onClick={() => setMobileOpen(false)}>
+            <History size={18} />
+            <span>观察台</span>
+          </NavLink>
           <NavLink to="/evidence" onClick={() => setMobileOpen(false)}>
             <BarChart3 size={18} />
             <span>实验与证据</span>
@@ -44,7 +49,7 @@ export function AppShell() {
         </nav>
 
         <div className="topbar__right">
-          <div className="topbar-health" aria-label="运行环境">
+          {location.pathname === "/live" && <div className="topbar-health" aria-label="运行环境">
             <div className={health?.model_service.ok ? "topbar-health__item is-ready" : "topbar-health__item"} title={health?.model_service.url ?? "正在检查 vLLM"}>
               <Server size={14} /><span /><div><strong>vLLM</strong><small>{health?.model_service.ok ? "服务正常" : "离线"}</small></div>
             </div>
@@ -54,7 +59,7 @@ export function AppShell() {
             <div className={health?.worker.ok && health?.role_worker?.ok ? "topbar-health__item is-ready" : "topbar-health__item"} title={health?.role_worker?.detail || "单 Worker 队列"}>
               <ListChecks size={14} /><span /><div><strong>任务队列</strong><small>{health?.worker.ok && health?.role_worker?.ok ? "单 Worker" : "环境异常"}</small></div>
             </div>
-          </div>
+          </div>}
           <button className="icon-button mobile-menu" onClick={() => setMobileOpen((value) => !value)} title="菜单">
             {mobileOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
@@ -65,7 +70,7 @@ export function AppShell() {
           <Outlet />
         </PageErrorBoundary>
       </main>
-      {location.pathname !== "/live" && <footer className="app-footer">
+      {location.pathname !== "/live" && location.pathname !== "/observatory" && <footer className="app-footer">
         <span><Database size={14} />固定证据快照与实时运行记录分开存储</span>
         <span>StateBus</span>
       </footer>}

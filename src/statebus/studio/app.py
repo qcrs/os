@@ -22,6 +22,7 @@ from statebus.studio.jobs import JobManager
 from statebus.studio.models import RunCreate, RunView
 from statebus.studio.recipes import RECIPES, RECIPE_BY_ID, resolve_embedding_model_path
 from statebus.studio.task_flow import build_task_flow_index
+from statebus.studio.observatory import COLLECTION_ID, load_campaign, load_evidence, load_task
 
 
 manager = JobManager()
@@ -160,6 +161,40 @@ async def system_health() -> dict[str, Any]:
 @app.get("/api/v1/evidence/current")
 async def evidence_current() -> dict[str, Any]:
     return load_evidence_snapshot()
+
+
+@app.get("/api/v1/evidence/mainline")
+async def evidence_mainline() -> dict[str, Any]:
+    return load_evidence()
+
+
+@app.get("/api/v1/evidence/archive/2026-07-26")
+async def evidence_archive_20260726() -> dict[str, Any]:
+    return load_evidence_snapshot()
+
+
+@app.get("/api/v1/observatory/campaigns/{collection_id}")
+async def observatory_campaign(collection_id: str) -> dict[str, Any]:
+    if collection_id != COLLECTION_ID:
+        raise HTTPException(status_code=404, detail="Observatory collection not found")
+    return load_campaign()
+
+
+@app.get("/api/v1/observatory/campaigns/{collection_id}/tasks/{task_id}")
+async def observatory_task(collection_id: str, task_id: str) -> dict[str, Any]:
+    if collection_id != COLLECTION_ID:
+        raise HTTPException(status_code=404, detail="Observatory collection not found")
+    try:
+        return load_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Observatory task not found") from exc
+
+
+@app.get("/api/v1/observatory/campaigns/{collection_id}/evidence")
+async def observatory_evidence(collection_id: str) -> dict[str, Any]:
+    if collection_id != COLLECTION_ID:
+        raise HTTPException(status_code=404, detail="Observatory collection not found")
+    return load_evidence()
 
 
 @app.get("/api/v1/catalog")

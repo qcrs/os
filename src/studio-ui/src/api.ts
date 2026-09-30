@@ -1,4 +1,4 @@
-import type { Catalog, EvidenceSnapshot, RunView, SystemHealth, TaskFlowIndex } from "./types";
+import type { Catalog, EvidenceSnapshot, ObservatoryCampaign, ObservatoryEvidence, ObservatoryTask, RunView, SystemHealth, TaskFlowIndex } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -36,4 +36,11 @@ export const studioApi = {
     const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
     return request<TaskFlowIndex>(`/api/v1/runs/${runId}/task-flow${query}`);
   },
+  observatoryCampaign: () => request<ObservatoryCampaign>("/api/v1/observatory/campaigns/contest39-20260927"),
+  observatoryTask: (taskId: string) => request<ObservatoryTask>(`/api/v1/observatory/campaigns/contest39-20260927/tasks/${encodeURIComponent(taskId)}`),
+  // Reserved adapter contract for a future live experiment runner. It is intentionally not called by replay mode.
+  observatoryTaskFromSource: (sourceId: string, taskId: string) => request<ObservatoryTask>(`/api/v1/observatory/sources/${encodeURIComponent(sourceId)}/tasks/${encodeURIComponent(taskId)}`),
+  observatoryEvidence: () => request<ObservatoryEvidence>("/api/v1/observatory/campaigns/contest39-20260927/evidence"),
+  evidenceMainline: () => request<ObservatoryEvidence>("/api/v1/evidence/mainline"),
+  evidenceArchive: () => request<EvidenceSnapshot>("/api/v1/evidence/archive/2026-07-26"),
 };

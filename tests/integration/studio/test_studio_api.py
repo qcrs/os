@@ -14,6 +14,7 @@ import statebus.studio.jobs as studio_jobs
 from scripts.diagnostics import run_adaptive_agent_smoke as adaptive_smoke
 from statebus.studio.catalog import load_catalog, load_evidence_snapshot
 from statebus.studio.jobs import JobManager
+from statebus.studio.observatory import load_campaign, load_task
 from statebus.studio.task_flow import build_task_flow_index
 
 
@@ -37,6 +38,25 @@ def test_catalog_exposes_registered_tasks_without_external_paths() -> None:
     assert sum(dataset["task_count"] for dataset in catalog["datasets"]) == 53
     assert all(not source["path"].startswith("/") for dataset in catalog["datasets"] for source in dataset["sources"])
     assert all(source["sha256"] for dataset in catalog["datasets"] for source in dataset["sources"])
+
+
+def test_observatory_bundle_keeps_cross_task_identity_and_receipts() -> None:
+    campaign = load_campaign()
+    assert campaign["collection"] == "contest39-20260927"
+    assert campaign["task_ids"] == [f"F{index:02d}" for index in range(1, 13)]
+
+    f02 = load_task("F02")
+    f02_memory = next(obj for obj in f02["objects"] if obj["object_type"] == "MemoryRef")
+    assert f02_memory["id"] == "memory:F01:3b4d093b019198a0"
+    assert f02_memory["fields"]["verdict"] == "degraded"
+
+    f12 = load_task("F12")
+    f12_memory = next(obj for obj in f12["objects"] if obj["object_type"] == "MemoryRef")
+    receipts = [obj for obj in f12["objects"] if obj["object_type"] == "Receipt"]
+    assert f12_memory["id"] == "memory:F10:3b7bf27d5a450bca"
+    assert {receipt["fields"]["consumer_agent"] for receipt in receipts} == {"executor", "summarizer"}
+    state = next(obj for obj in f12["objects"] if obj["object_type"] == "SemanticStateRef")
+    assert state["fields"]["wire_bytes"] is None
 
 
 def test_api_serves_snapshot_catalog_and_controlled_run(tmp_path, monkeypatch) -> None:

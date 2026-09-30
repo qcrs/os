@@ -4,9 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
+    "test:flow": "node tests/observatory-flow.test.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

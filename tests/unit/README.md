@@ -9,3 +9,17 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest -q tests/unit
 ```
 
 测试通过与否以本次命令输出为准；本 README 只说明测试职责。
+
+## 目录导航
+
+```text
+tests/unit/
+├── README.md
+├── codeact/
+├── contracts/
+├── mechanisms/
+├── memory/
+└── runtime/
+```
+
+目录入口：[`codeact/`](codeact/)、[`contracts/`](contracts/)、[`mechanisms/`](mechanisms/)、[`memory/`](memory/)、[`runtime/`](runtime/)。

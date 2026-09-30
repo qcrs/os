@@ -223,3 +223,122 @@ export interface SystemHealth {
   model_service: { ok: boolean; status: number; url: string; detail?: string };
   policy: string;
 }
+
+export type ObservatoryView = "runtime" | "data" | "memory";
+
+export interface ObservatoryEvent {
+  id: string;
+  kind: string;
+  order: number;
+  event_ts_ns: number | null;
+  time_basis: "runtime_timestamp" | "causal_order" | string;
+  actor: string;
+  object_ids: string[];
+  source_ref: { path: string; line?: number; json_pointer?: string };
+  payload: Record<string, unknown>;
+}
+
+export interface ObservatoryObject {
+  id: string;
+  object_type: string;
+  label: string;
+  summary: string;
+  fields: Record<string, unknown>;
+}
+
+export interface ObservatoryEdge {
+  from: string;
+  to: string;
+  kind: string;
+  label: string;
+}
+
+export interface ObservatoryTaskContract {
+  method: string;
+  periods: string[];
+  required_history: string[];
+  instructions: string;
+  input_schemas: Record<string, Record<string, string>>;
+  output_schema: Record<string, string>;
+  source_ref: ObservatoryEvent["source_ref"];
+}
+
+export interface ObservatoryDelivery {
+  rows: Array<Record<string, string | number | null>>;
+  rows_source_ref: ObservatoryEvent["source_ref"];
+  claim_set: {
+    claim_set_id: string;
+    status: string;
+    claims: Array<{ claim_id: string; claim_text: string; status: string; supporting_evidence_item_ids: string[]; supporting_artifact_ref_ids: string[] }>;
+  };
+  report_source_ref: ObservatoryEvent["source_ref"];
+  quality_passed: boolean | null;
+  business_quality_passed: boolean | null;
+  mechanism_gate_passed: boolean | null;
+  quality_source_ref: ObservatoryEvent["source_ref"];
+}
+
+export interface ObservatoryTask {
+  task_id: string;
+  family: string;
+  variant: string;
+  run_id: string;
+  status: string;
+  round: number;
+  metrics: Record<string, unknown>;
+  task_contract?: ObservatoryTaskContract;
+  delivery?: ObservatoryDelivery;
+  events: ObservatoryEvent[];
+  objects: ObservatoryObject[];
+  edges: ObservatoryEdge[];
+  raw_evidence: Array<{ source_ref: ObservatoryEvent["source_ref"]; event_type: string; fields: Record<string, unknown> }>;
+  source_ref: ObservatoryEvent["source_ref"];
+}
+
+export interface ObservatoryCampaignTask {
+  task_id: string;
+  round: number;
+  status: string;
+  run_id: string;
+  event_count: number;
+  object_count: number;
+  memory_consumption_count: number;
+}
+
+export interface ObservatoryCampaign {
+  schema: string;
+  collection: string;
+  collection_date: string;
+  generator_version: string;
+  run_ids: Record<string, string>;
+  families: string[];
+  task_ids: string[];
+  tasks: ObservatoryCampaignTask[];
+  evidence: {
+    quality_pass_rate: number;
+    passed_count: number;
+    record_count: number;
+    provider: Record<string, number>;
+    state: Record<string, unknown>;
+    memory: Record<string, unknown>;
+  };
+  source_file_count: number;
+  constraints: Record<string, unknown>;
+}
+
+// Both archived replays and future experiment adapters resolve to this same task shape.
+export type ObservatorySourceMode = "replay" | "experiment";
+
+export interface ObservatorySource {
+  source_id: string;
+  mode: ObservatorySourceMode;
+  label: string;
+  status: "available" | "running" | "complete" | "failed";
+  task_ids: string[];
+}
+
+export interface ObservatoryEvidence {
+  collection: string;
+  results: Record<string, any>;
+  tasks: Array<Record<string, string>>;
+}
