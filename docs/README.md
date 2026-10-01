@@ -11,6 +11,14 @@
 | Runtime 调用路径、角色、State、Memory 和扩展 | [`implementation/README.md`](implementation/README.md) |
 | 实验总览和关键数字 | [`experiments/README.md`](experiments/README.md) |
 | 逐组实验表和逐任务结果 | [`experiments/results.md`](experiments/results.md) |
+| 答辩介绍的讲述逻辑、正文和后续展开 | [`presentation/introduction.md`](presentation/introduction.md) |
+| 答辩结构化通信协议亮点的一页设计 | [`presentation/structured_protocol.md`](presentation/structured_protocol.md) |
+| 答辩 Embedding 状态传递亮点的一页设计 | [`presentation/embedding_state.md`](presentation/embedding_state.md) |
+| 答辩 Logit 状态与选择性取证亮点的一页设计 | [`presentation/logit_state.md`](presentation/logit_state.md) |
+| 答辩显式 KV continuation 亮点的一页设计 | [`presentation/kv_state.md`](presentation/kv_state.md) |
+| 答辩 APC 动态前缀复用亮点的一页设计 | [`presentation/apc_state.md`](presentation/apc_state.md) |
+| 答辩共享记忆与跨任务复用的一页设计 | [`presentation/memory_reuse.md`](presentation/memory_reuse.md) |
+| 非文本状态的整体定位与讲述逻辑 | [`presentation/non_text_state.md`](presentation/non_text_state.md) |
 | 赛题原文 | [`reference/题目.md`](reference/题目.md) |
 
 ## 运行入口
